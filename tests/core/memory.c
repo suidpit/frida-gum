@@ -26,6 +26,7 @@ TESTLIST_BEGIN (memory)
   TESTENTRY (scan_range_finds_three_wildcarded_matches)
   TESTENTRY (scan_range_finds_three_masked_matches)
   TESTENTRY (scan_range_finds_three_regex_matches)
+  TESTENTRY (scan_range_find_three_relational_matches)
   TESTENTRY (is_memory_readable_handles_mixed_page_protections)
   TESTENTRY (alloc_n_pages_returns_aligned_rw_address)
   TESTENTRY (alloc_n_pages_near_returns_aligned_rw_address_within_range)
@@ -406,6 +407,36 @@ TESTCASE (scan_range_finds_three_regex_matches)
   gum_match_pattern_unref (pattern);
 }
 
+TESTCASE (scan_range_find_three_relational_matches_half)
+{
+  guint8 buf[] = {
+    0x01, 0x23,
+    0x00, 0x44,
+    0x00, 0x43,
+    0x00, 0x45
+  };
+  GumMemoryRange range;
+  GumMatchPattern * pattern;
+  TestForEachContext ctx;
+
+  range.base_address = GUM_ADDRESS (buf);
+  range.size = sizeof (buf);
+
+  pattern = gum_match_pattern_new_from_string ("H>0043");
+  g_assert_nonnull (pattern);
+
+  ctx.number_of_calls = 0;
+  ctx.value_to_return = TRUE;
+
+  ctx.expected_address[0] = buf + 2;
+  ctx.expected_address[1] = buf + 6;
+  ctx.expected_size = 2;
+  gum_memory_scan (&range, pattern, match_found_cb, &ctx);
+  g_assert_cmpuint (ctx.number_of_calls, ==, 2);
+
+  gum_match_pattern_unref (pattern);
+}
+
 TESTCASE (is_memory_readable_handles_mixed_page_protections)
 {
   guint8 * pages;
@@ -559,7 +590,6 @@ match_found_cb (GumAddress address,
                 gpointer user_data)
 {
   TestForEachContext * ctx = (TestForEachContext *) user_data;
-
   g_assert_cmpuint (ctx->number_of_calls, <, 3);
 
   g_assert_cmpuint (address, ==,

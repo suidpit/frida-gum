@@ -781,12 +781,14 @@ gum_match_pattern_try_match_on (const GumMatchPattern * self,
       guint64 needle_value = 0, mem_value = 0;
       memcpy(&mem_value, bytes + token->offset, token->bytes->len);
       memcpy(&needle_value, token->bytes->data, token->bytes->len);
-      if (token->type == GUM_MATCH_LT && mem_value >= needle_value)
+      if ((token->type == GUM_MATCH_LT && mem_value >= needle_value)
+        || (token->type == GUM_MATCH_GT && mem_value <= needle_value)) {
         return FALSE;
-      else if (token->type == GUM_MATCH_GT && mem_value <= needle_value)
-        return FALSE;
+      }
       else
+      {
         return TRUE;
+      }
     }
   }
 
