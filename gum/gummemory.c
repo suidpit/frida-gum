@@ -55,6 +55,7 @@ struct _GumMatchPattern
   GPtrArray * tokens;
   guint size;
   GRegex * regex;
+  bool is_relational;
 };
 
 static void gum_memory_scan_raw (const GumMemoryRange * range,
@@ -66,6 +67,8 @@ static GumMatchPattern * gum_match_pattern_new_from_hexstring (
     const gchar * match_combined_str);
 static GumMatchPattern * gum_match_pattern_new_from_regex (
     const gchar * regex_str);
+static GumMatchPattern * gum_match_pattern_new_from_relational (
+    const gchar * relational_str);
 static GumMatchPattern * gum_match_pattern_new (void);
 static void gum_match_pattern_update_computed_size (GumMatchPattern * self);
 static GumMatchToken * gum_match_pattern_get_longest_token (
@@ -370,7 +373,13 @@ gum_memory_scan_raw (const GumMemoryRange * range,
   if (needle == NULL)
   {
     needle = gum_match_pattern_get_longest_token (pattern, GUM_MATCH_MASK);
-    mask_data = (guint8 *) needle->masks->data;
+    if (needle != NULL) {
+      mask_data = (guint8 *) needle->masks->data;
+    }
+  }
+  if (needle == NULL)
+  {
+    needle = (GumMatchToken *) g_ptr_array_index (pattern->tokens, 0);
   }
 
   needle_data = (guint8 *) needle->bytes->data;
@@ -384,21 +393,23 @@ gum_memory_scan_raw (const GumMemoryRange * range,
   {
     guint8 * start;
 
-    if (mask_data == NULL)
-    {
-      if (cur[0] != needle_data[0] ||
-          memcmp (cur, needle_data, needle_len) != 0)
+    if (!pattern->is_relational) {
+      if (mask_data == NULL)
       {
-        continue;
+        if (cur[0] != needle_data[0] ||
+            memcmp (cur, needle_data, needle_len) != 0)
+        {
+          continue;
+        }
       }
-    }
-    else
-    {
-      if ((cur[0] & mask_data[0]) != (needle_data[0] & mask_data[0]) ||
-          gum_memcmp_mask ((guint8 *) cur, (guint8 *) needle_data,
-              (guint8 *) mask_data, needle_len) != 0)
+      else
       {
-        continue;
+        if ((cur[0] & mask_data[0]) != (needle_data[0] & mask_data[0]) ||
+            gum_memcmp_mask ((guint8 *) cur, (guint8 *) needle_data,
+                (guint8 *) mask_data, needle_len) != 0)
+        {
+          continue;
+        }
       }
     }
 
@@ -454,6 +465,10 @@ gum_match_pattern_new_from_string (const gchar * pattern_str)
     gchar * regex_str = g_strndup (pattern_str + 1, strlen (pattern_str) - 2);
     result = gum_match_pattern_new_from_regex (regex_str);
     g_free (regex_str);
+  }
+  else if (pattern_str[1] == '>' || pattern_str[1] == '<')
+  {
+    result = gum_match_pattern_new_from_relational (pattern_str);
   }
   else
   {
@@ -568,6 +583,63 @@ parse_error:
 
     return NULL;
   }
+}
+
+static GumMatchPattern *
+gum_match_pattern_new_from_relational (const gchar * relational_str)
+{
+  GumMatchPattern * pattern = NULL;
+  GumMatchToken * token;
+  guint8 width = 0;
+  GumMatchType type;
+  const gchar *hex_str;
+  guint rel_str_len = strlen(relational_str);
+
+  if (rel_str_len < 3)
+    goto parse_error;
+
+  switch (relational_str[0])
+  {
+    case 'B': width = 1; break;
+    case 'H': width = 2; break;
+    case 'I': width = 4; break;
+    case 'L': width = 8; break;
+    default: goto parse_error;
+  }
+
+  if (relational_str[1] == '>')
+    type = GUM_MATCH_GT;
+  else if (relational_str[1] == '<')
+    type = GUM_MATCH_LT;
+  else
+    goto parse_error;
+
+  hex_str = relational_str + 2;
+  if (strlen(hex_str) != width * 2)
+    goto parse_error;
+
+  pattern = gum_match_pattern_new();
+  pattern->is_relational = true;
+  token = gum_match_pattern_push_token(pattern, type);
+  for (guint i = 0; i < width; i++)
+  {
+    int hi = g_ascii_xdigit_value(hex_str[i * 2]);
+    int lo = g_ascii_xdigit_value(hex_str[i * 2 + 1]);
+    if (hi == -1 || lo == -1)
+      goto parse_error;
+    guint8 value = (hi << 4) | lo;
+    gum_match_token_append(token, value);
+  }
+
+  gum_match_pattern_update_computed_size(pattern);
+
+  return pattern;
+
+  /* ERRORS */
+parse_error:
+  if (pattern != NULL)
+    gum_match_pattern_unref(pattern);
+  return NULL;
 }
 
 static GumMatchPattern *
@@ -703,6 +775,18 @@ gum_match_pattern_try_match_on (const GumMatchPattern * self,
     else if (token->type == GUM_MATCH_MASK)
     {
       no_masks = FALSE;
+    }
+    else if (token->type == GUM_MATCH_LT || token->type == GUM_MATCH_GT)
+    {
+      guint64 needle_value = 0, mem_value = 0;
+      memcpy(&mem_value, bytes + token->offset, token->bytes->len);
+      memcpy(&needle_value, token->bytes->data, token->bytes->len);
+      if (token->type == GUM_MATCH_LT && mem_value >= needle_value)
+        return FALSE;
+      else if (token->type == GUM_MATCH_GT && mem_value <= needle_value)
+        return FALSE;
+      else
+        return TRUE;
     }
   }
 

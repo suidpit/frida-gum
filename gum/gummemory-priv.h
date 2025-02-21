@@ -16,7 +16,9 @@ enum _GumMatchType
 {
   GUM_MATCH_EXACT,
   GUM_MATCH_WILDCARD,
-  GUM_MATCH_MASK
+  GUM_MATCH_MASK,
+  GUM_MATCH_GT,
+  GUM_MATCH_LT
 };
 
 struct _GumMatchToken
